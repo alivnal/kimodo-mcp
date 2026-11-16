@@ -10,7 +10,7 @@ Jobs are detached: they outlive the Claude session that started them. Each job i
 outputs/_logs/_mcp_jobs/<id>.json, written by a small runner (this file with --run-job) that waits for the process and
 stores its exit code, so any session can read any job's state.
 
-    <install>/mcp/.venv/Scripts/python.exe <install>/mcp/kimodo_mcp.py        (stdio MCP server; see README.md)
+    kimodo-mcp        (stdio MCP server; uvx --from git+https://github.com/alivnal/kimodo-mcp kimodo-mcp; see README.md)
 
 Author: Ali Unal (https://github.com/alivnal). Copyright (c) 2026 Ali Unal.
 """
@@ -29,10 +29,13 @@ from pathlib import Path
 from typing import Any, Literal
 
 WINDOWS = os.name == "nt"
-ROOT = Path(os.environ.get("KIMODO_ROOT") or Path(__file__).resolve().parents[1])  # the install: scripts/, specs/, outputs/
-REPO = ROOT / "kimodo"
+# The workspace holds specs/, outputs/ and assets/ (KIMODO_ROOT, default ~/kimodo-workspace). Jobs run with the Python
+# of the user's Kimodo install (KIMODO_PYTHON; default <workspace>/venv311, the layout of a Windows Kimodo install).
+ROOT = Path(os.environ.get("KIMODO_ROOT") or Path.home() / "kimodo-workspace").resolve()
+os.environ["KIMODO_ROOT"] = str(ROOT)  # the engine scripts read it; every job inherits it
 PY = Path(os.environ.get("KIMODO_PYTHON") or ROOT / "venv311" / ("Scripts/python.exe" if WINDOWS else "bin/python"))
-SCRIPTS = ROOT / "scripts"
+REPO = ROOT / "kimodo" if (ROOT / "kimodo").is_dir() else ROOT  # where jobs run
+SCRIPTS = Path(__file__).resolve().parent / "scripts"  # the engine scripts shipped with this package
 SPECS = ROOT / "specs"
 OUTPUTS = ROOT / "outputs"
 LOGS = OUTPUTS / "_logs"
@@ -488,18 +491,27 @@ def _spec_prompts(spec):
 @mcp.tool(annotations={"title": "Kimodo status", "readOnlyHint": True, "openWorldHint": False})
 def status(install_check: bool = False) -> dict:
     """GPU memory, Kimodo processes on the GPU (batch generation or the web demo, from any session or the CLI), other
-    heavy GPU apps (Blender, Houdini husk, Cascadeur), running SkinTokens retargets and the latest MCP jobs.
-    install_check=true also runs scripts/kimodo_check.py (8 install checks, about a minute; exit 0 = ready)."""
+    heavy GPU apps (Blender, Houdini husk, Cascadeur), running retargets, the latest MCP jobs, and the workspace and
+    Kimodo Python in use. install_check=true also runs kimodo_doctor.py with that Python (Kimodo importable, torch +
+    CUDA, SOMA body asset; optional FBX export, Blender, ffmpeg; about 30 s)."""
     kimodo, other, retarget = _scan()
     out = {"gpu": _gpu(), "kimodo_on_gpu": kimodo, "other_gpu_apps": other, "retargets_running": retarget,
            "jobs": [{"id": r["id"], "state": _job_state(r), "started": r["started"], "ended": r.get("ended")}
                     for r in _records()[:10]],
-           "generate_allowed": not kimodo and not _running("generate")}
+           "generate_allowed": not kimodo and not _running("generate"),
+           "workspace": str(ROOT), "kimodo_python": str(PY) if PY.is_file() else f"NOT FOUND: {PY} (set KIMODO_PYTHON)"}
     if install_check:
-        r = subprocess.run([str(PY), str(SCRIPTS / "kimodo_check.py")], cwd=str(ROOT), capture_output=True, text=True, stdin=subprocess.DEVNULL,
-                           encoding="utf-8", errors="replace", timeout=600)
+        _need_python()
+        r = subprocess.run([str(PY), str(SCRIPTS / "kimodo_doctor.py")], cwd=str(ROOT), capture_output=True, text=True,
+                           stdin=subprocess.DEVNULL, encoding="utf-8", errors="replace", timeout=600)
         out["install_check"] = {"exit_code": r.returncode, "output": (r.stdout + r.stderr)[-4000:]}
     return out
+
+
+def _need_python():
+    if not PY.is_file():
+        raise ToolError(f"No Kimodo Python at {PY}. Set KIMODO_PYTHON in this server's env to the python of the "
+                        "environment Kimodo is installed in (see the README).")
 
 
 @mcp.tool(annotations={"title": "Write a Kimodo spec", "readOnlyHint": False, "destructiveHint": False,
@@ -531,6 +543,7 @@ def write_spec(spec: dict[str, Any], overwrite: bool = False) -> dict:
     if conflicts and not overwrite:
         raise ToolError("Spec not written: " + "; ".join(conflicts) + ". Use a new name (e.g. "
                         f"{spec['name']}_v2), or overwrite=true.")
+    SPECS.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     clips = spec["clips"]
     secs = sum(sum(s["seconds"] for s in c["segments"]) if "segments" in c else c["seconds"] for c in clips)
@@ -561,6 +574,7 @@ def generate(spec_name: str, only: list[str] | None = None, force: bool = False,
         raise ToolError(f"only: {sorted(set(only) - set(names))} not in the spec (clips: {names})")
     if samples is not None and not 1 <= samples <= 8:
         raise ToolError("samples: 1-8")
+    _need_python()
     cmd = [str(PY), "-u", str(SCRIPTS / "kimodo_batch.py"), str(spec_path)]
     if only:
         cmd += ["--only", ",".join(only)]
@@ -600,6 +614,7 @@ def preview(batch: str, force: bool = False) -> dict:
             raise ToolError(f"{batch} is still generating; preview it when the job is done.")
         if _running("preview", batch):
             raise ToolError(f"A preview of {batch} is already running: {_running('preview', batch)[0]['id']}")
+        _need_python()
         cmd = [str(PY), "-u", str(SCRIPTS / "kimodo_preview.py"), str(d)] + (["--force"] if force else [])
         rec = _start_job("preview", batch, cmd, REPO, LOGS / f"{batch}_preview.log")
     return {"job_id": rec["id"], "log": rec["log"], "next": "job(job_id); then view(batch, clip)"}
@@ -707,7 +722,7 @@ def list_outputs(batch: str | None = None) -> dict:
     picks.json rows and files."""
     if batch is None:
         rows = []
-        for d in sorted((p for p in OUTPUTS.iterdir() if p.is_dir() and not p.name.startswith("_")),
+        for d in sorted((p for p in (OUTPUTS.iterdir() if OUTPUTS.is_dir() else []) if p.is_dir() and not p.name.startswith("_")),
                         key=lambda p: p.stat().st_mtime, reverse=True):
             row = {"name": d.name, "modified": datetime.fromtimestamp(d.stat().st_mtime).isoformat(timespec="minutes")}
             if (d / "manifest.json").is_file():
@@ -815,7 +830,7 @@ def measure(take: str) -> dict:
     T = P.shape[0]
     fps = float(d["fps"]) if "fps" in d.files else 30.0
     if "joint_names" not in d.files:
-        raise ToolError(f"{path.name} has no joint_names; run venv311\\Scripts\\python.exe scripts\\npz_add_skeleton.py on it.")
+        raise ToolError(f"{path.name} has no joint_names; run kimodo_mcp/scripts/npz_add_skeleton.py on it with your Kimodo python.")
     J = {str(n): i for i, n in enumerate(d["joint_names"])}
     j = lambda n: P[:, J[n]]  # noqa: E731
     r2 = lambda x, k=2: round(float(x), k)  # noqa: E731
@@ -943,6 +958,7 @@ def finalize(name: str, picks: list[dict[str, str]], note: str = "", overwrite: 
         raise ToolError(f"outputs/{name} is a generated batch, not a picks folder; choose another name.")
     d.mkdir(parents=True, exist_ok=True)
     _write_json(d / "picks.json", data)
+    _need_python()
     r = subprocess.run([str(PY), str(SCRIPTS / "kimodo_finalize.py"), str(d / "picks.json")], cwd=str(REPO),
                        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=300, stdin=subprocess.DEVNULL)
     if r.returncode:
@@ -1006,5 +1022,9 @@ if RETARGET_SCRIPT:  # the tool exists only when a retarget script is configured
                                     "destructiveHint": False, "idempotentHint": True, "openWorldHint": False})
 
 
-if __name__ == "__main__":
+def main():
     mcp.run(show_banner=False)
+
+
+if __name__ == "__main__":
+    main()

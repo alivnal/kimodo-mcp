@@ -2,9 +2,10 @@
 
 # kimodo-mcp
 
-**Text-to-motion as tools for Claude.** An MCP server for [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) that
-writes motion specs, generates takes as background jobs, renders previews, looks at them, measures them and collects
-the picks, without ever holding the model on your GPU between jobs.
+**Text-to-motion as tools for Claude.** A standalone MCP server that plugs into your existing
+[NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) install: it writes motion specs, generates takes as background
+jobs, renders previews, looks at them, measures them and collects the picks, without ever holding the model on your
+GPU between jobs.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-2a78d6.svg)](LICENSE)
 ![Python 3.11](https://img.shields.io/badge/python-3.11-2a78d6.svg)
@@ -13,7 +14,7 @@ the picks, without ever holding the model on your GPU between jobs.
 
 <img src="docs/demo.gif" alt="Four Kimodo takes generated through the MCP server: a steady walk, a right-hand wave, jumping in place, looking around" width="800">
 
-<sub>Four takes from <a href="specs/examples/demo_showcase.json"><code>specs/examples/demo_showcase.json</code></a>, generated, previewed and picked through the tools below. Rendered on Kimodo's own SOMA body.</sub>
+<sub>Four takes from <a href="examples/demo_showcase.json"><code>examples/demo_showcase.json</code></a>, generated, previewed and picked through the tools below. Rendered on Kimodo's own SOMA body.</sub>
 
 </div>
 
@@ -34,18 +35,18 @@ numbers from the motion file and hands you the better take, with frame numbers f
 | **Safe on a shared card** | A generation is refused while another Kimodo process (a CLI batch, the web demo, another session) is on the GPU. Low free VRAM gives a warning. |
 | **Jobs outlive the chat** | Jobs are detached. Close the session and the batch keeps going; any session can read any job's state and log. |
 | **Claude can see the motion** | `view` returns contact sheets and frame grids with frame numbers as images; `measure` turns the take's joints into numbers (speed, lean, which hand rises, foot slide, airborne spans). |
-| **Same files as the CLI** | The tools run the same scripts you can run by hand. Specs, outputs, logs and manifests are identical either way. |
+| **Works with your Kimodo** | No fork, no bundled install: point it at the Python of the Kimodo you already have. The engine scripts ship inside the package and also run by hand. |
 
 ## Tools
 
 | tool | what it does | runs as |
 |---|---|---|
-| `status` | GPU memory, Kimodo processes on the GPU, other GPU apps (Blender, Houdini, Cascadeur), running jobs; optional install check | instant |
+| `status` | GPU memory, Kimodo processes on the GPU, other GPU apps (Blender, Houdini, Cascadeur), running jobs; `install_check` tests your Kimodo env (doctor) | instant |
 | `write_spec` | validates a spec (keys, seconds, files, prompt form) and writes `specs/<name>.json`; refuses to reuse a name with other prompts | instant |
-| `generate` | runs `scripts/kimodo_batch.py` on a spec: one model load, all prompts encoded once, every clip and sample; resumes, `only`, `force`, `samples`, `reexport` | **background job** |
+| `generate` | runs the batch engine on a spec: one model load, all prompts encoded once, every clip and sample; resumes, `only`, `force`, `samples`, `reexport` | **background job** |
 | `job` | state and progress of any job (phase, clips done, error lines, GPU after); also reads a CLI run's log | instant |
 | `cancel` | stops a job this server started, with its whole process tree; nothing else is ever touched | instant |
-| `preview` | runs `scripts/kimodo_preview.py`: Blender renders each take on the SOMA body to mp4, a contact sheet per clip, README | **background job** |
+| `preview` | Blender renders each take on the SOMA body to mp4, a contact sheet per clip, README | **background job** |
 | `list_outputs` | output folders, or one batch's clips with prompts, notes, constraint residuals and which files exist | instant |
 | `view` | a clip's contact sheet, or a frame grid of one take with frame numbers, **as an image** | instant |
 | `measure` | numbers from a take's `.npz`: travel, speed per second, body turn, trunk lean, hands, feet, step-up height, slide, airborne spans | instant |
@@ -60,7 +61,7 @@ flowchart TB
         A["Claude session"]
     end
     subgraph server["kimodo MCP server · no torch"]
-        T["11 tools"]
+        T["10 tools<br/>(+ retarget)"]
         G{"GPU guard<br/>Kimodo already<br/>on the GPU?"}
     end
     subgraph jobs["Detached job · own process"]
@@ -164,7 +165,7 @@ flowchart LR
 | `seed`, `samples`, `in_place`, `diffusion_steps` | per clip overrides |
 
 Same spec + same seed gives the same motion. Full key reference: the docstrings of
-[`scripts/kimodo_batch.py`](scripts/kimodo_batch.py) and [`scripts/kimodo_author.py`](scripts/kimodo_author.py).
+[`kimodo_batch.py`](src/kimodo_mcp/scripts/kimodo_batch.py) and [`kimodo_author.py`](src/kimodo_mcp/scripts/kimodo_author.py).
 
 ### What `view` shows Claude
 
@@ -196,38 +197,22 @@ right is on the image's left; `measure` settles sides from the data.
 
 ## Install
 
-**You need:** Windows 10/11, an NVIDIA GPU with 8 GB or more and its driver, Python 3.11 (`py -3.11`), Git,
-[Blender](https://www.blender.org/) 4.x/5.x for previews, `ffmpeg` on `PATH`, and [uv](https://docs.astral.sh/uv/).
+**You need**
 
-```bat
-git clone https://github.com/alivnal/kimodo-mcp.git
-cd kimodo-mcp
-install_kimodo.bat
-```
+- A working **Kimodo** install with its Python environment: [nv-tlabs/kimodo](https://github.com/nv-tlabs/kimodo)
+  (on an 8 GB card, [Aero-Ex/kimodo](https://github.com/Aero-Ex/kimodo) with its NF4 text encoder is the lighter
+  option). kimodo-mcp only needs that environment's `python`.
+- An NVIDIA GPU, [Blender](https://www.blender.org/) 4.x/5.x and `ffmpeg` on `PATH` for previews,
+  and [uv](https://docs.astral.sh/uv/).
 
-`install_kimodo.bat` builds everything next to itself and is safe to run again: a Python 3.11 venv with pinned
-packages (torch cu128, the FBX SDK from PyPI), the NF4-quantised text encoder, Kimodo from
-[alivnal/kimodo](https://github.com/alivnal/kimodo) (branch `local`: NVIDIA's v1.2 sync, a Mixamo FBX export and an
-NF4 path fix, on top of [Aero-Ex/kimodo](https://github.com/Aero-Ex/kimodo)), the viser web client, then an
-8-point install check. Kimodo's own model weights download from Hugging Face on first use.
+**Register it with Claude Code** (all projects), pointing at your Kimodo Python and a workspace folder for specs and
+outputs:
 
-Then the server's own small venv:
-
-```bat
-cd mcp
-uv sync --python 3.11
-```
-
-For the optional FBX export onto a Mixamo character, download **Y Bot** from [mixamo.com](https://www.mixamo.com)
-into `assets/characters/Y Bot.fbx` (see [`assets/README.md`](assets/README.md)), or set `target_fbx` in a spec to any
-Mixamo-rigged FBX. Without it, takes are still written as `.npz` and previewed.
-
-### Register it
-
-**Claude Code** (all projects):
-
-```bat
-claude mcp add -s user kimodo -- "C:/path/to/kimodo-mcp/mcp/.venv/Scripts/python.exe" "C:/path/to/kimodo-mcp/mcp/kimodo_mcp.py"
+```bash
+claude mcp add -s user kimodo \
+  -e KIMODO_PYTHON="C:/path/to/kimodo/.venv/Scripts/python.exe" \
+  -e KIMODO_ROOT="C:/kimodo-workspace" \
+  -- uvx --from git+https://github.com/alivnal/kimodo-mcp kimodo-mcp
 ```
 
 **Claude Desktop** (`claude_desktop_config.json`):
@@ -236,22 +221,42 @@ claude mcp add -s user kimodo -- "C:/path/to/kimodo-mcp/mcp/.venv/Scripts/python
 {
   "mcpServers": {
     "kimodo": {
-      "command": "C:/path/to/kimodo-mcp/mcp/.venv/Scripts/python.exe",
-      "args": ["C:/path/to/kimodo-mcp/mcp/kimodo_mcp.py"]
+      "command": "uvx",
+      "args": ["--from", "git+https://github.com/alivnal/kimodo-mcp", "kimodo-mcp"],
+      "env": {
+        "KIMODO_PYTHON": "C:/path/to/kimodo/.venv/Scripts/python.exe",
+        "KIMODO_ROOT": "C:/kimodo-workspace"
+      }
     }
   }
 }
 ```
 
+Then ask Claude for *"kimodo status with the install check"*: the doctor checks that your Kimodo imports, torch sees
+CUDA, the SOMA body asset is there, and whether the optional FBX export, Blender and ffmpeg are found.
+
+The server itself runs in its own small environment (FastMCP, numpy, psutil, Pillow); nothing is installed into your
+Kimodo environment.
+
+### FBX export (optional)
+
+Takes are always written as `.npz` (Kimodo's full output for the SOMA skeleton, with the skeleton itself, so it can be
+retargeted without Kimodo) and previewed as `.mp4`. A Mixamo FBX per take is added when your Kimodo has a
+`kimodo.exports.mixamo_retarget` module (for example the export from
+[ComfyUI-Kimodo-Enhanced](https://github.com/stevelittlefish/ComfyUI-Kimodo-Enhanced)), the FBX SDK
+(`pip install fbxsdkpy`) and a target character: Mixamo's **Y Bot** saved as
+`<workspace>/assets/characters/Y Bot.fbx`, or any Mixamo-rigged FBX named in a spec's `target_fbx`.
+
 ### Configuration
 
-All optional, as environment variables of the server:
+Environment variables of the server:
 
 | variable | default | |
 |---|---|---|
-| `KIMODO_ROOT` | the repo folder | the install with `scripts/`, `specs/`, `outputs/` |
-| `KIMODO_PYTHON` | `venv311` in the install | the Python that runs Kimodo |
+| `KIMODO_PYTHON` | `<workspace>/venv311` | **the Python of your Kimodo environment** |
+| `KIMODO_ROOT` | `~/kimodo-workspace` | the workspace: `specs/`, `outputs/`, `assets/` |
 | `BLENDER` | `C:\Program Files\Blender Foundation\Blender 5.2\blender.exe` | Blender for previews |
+| `KIMODO_SKIN` | the asset inside the kimodo package | the SOMA body `.npz` the previews draw |
 | `KIMODO_RETARGET_SCRIPT` | unset | a bash script that puts takes on your rigged character; enables the `retarget` tool |
 | `KIMODO_RETARGET_CWD` | the script folder's parent | where the retarget script runs and writes `anim/<run>/report.md` |
 | `GIT_BASH` | `C:\Program Files\Git\bin\bash.exe` | bash for the retarget script on Windows |
@@ -262,16 +267,16 @@ of a SkinTokens retarget pipeline this server was built with; any script with th
 
 ## Without Claude
 
-Every tool is a script you can run yourself, from the `kimodo` folder with the install's Python:
+The engine is plain scripts in [`src/kimodo_mcp/scripts/`](src/kimodo_mcp/scripts), run with your Kimodo Python;
+the workspace comes from `KIMODO_ROOT`:
 
 ```bat
-..\venv311\Scripts\python.exe -u ..\scripts\kimodo_batch.py ..\specs\examples\demo_showcase.json
-..\venv311\Scripts\python.exe ..\scripts\kimodo_preview.py ..\outputs\demo_showcase
-..\venv311\Scripts\python.exe ..\scripts\kimodo_finalize.py ..\outputs\my_picks\picks.json
-..\venv311\Scripts\python.exe ..\scripts\kimodo_check.py
+set KIMODO_ROOT=C:\kimodo-workspace
+<kimodo python> -u kimodo_batch.py C:\kimodo-workspace\specs\demo_showcase.json
+<kimodo python> kimodo_preview.py C:\kimodo-workspace\outputs\demo_showcase
+<kimodo python> kimodo_finalize.py C:\kimodo-workspace\outputs\my_picks\picks.json
+<kimodo python> kimodo_doctor.py
 ```
-
-`start_kimodo.bat` starts Kimodo's own web demo.
 
 ## Numbers
 
@@ -298,23 +303,22 @@ Measured on an RTX 3070 (8 GB), Windows 11, 16 Nov 2026:
 
 ## Status
 
-Tested end to end on Windows 11 with an RTX 3070; every tool was run for real. The server's process handling has
-Linux code paths (no `creationflags`, a new session per job, `venv311/bin/python`), but the installer is Windows-only
-and Linux is untested.
+Tested end to end on Windows 11 with an RTX 3070, against a Kimodo built on Aero-Ex/kimodo with NVIDIA's v1.2 sync:
+every tool was run for real, from an empty workspace as well (FBX export off: `.npz` and previews only). The server's
+process handling has Linux code paths (no `creationflags`, a new session per job, `venv311/bin/python` as the default),
+but Linux is untested.
 
 ## Credits
 
 - [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (Apache-2.0; model weights under the
   [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/)),
   with the SOMA body used in the previews.
-- [Aero-Ex/kimodo](https://github.com/Aero-Ex/kimodo) and the NF4 text encoder
+- [Aero-Ex/kimodo](https://github.com/Aero-Ex/kimodo) and its NF4 text encoder
   [Aero-Ex/KIMODO-Meta3_llm2vec_NF4](https://huggingface.co/Aero-Ex/KIMODO-Meta3_llm2vec_NF4) (its own licence, from
-  its base model).
-- The Mixamo FBX export in the fork is adapted from
-  [stevelittlefish/ComfyUI-Kimodo-Enhanced](https://github.com/stevelittlefish/ComfyUI-Kimodo-Enhanced) (Apache-2.0).
+  its base model), which make Kimodo fit an 8 GB card.
 - [FastMCP](https://gofastmcp.com) for the server.
 
-Model weights, the text encoder and Mixamo characters are not part of this repository; they download from their
+Kimodo, its weights, the text encoder and Mixamo characters are not part of this repository; they come from their
 sources under their own terms.
 
 ## License

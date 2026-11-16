@@ -1,0 +1,24 @@
+[project]
+name = "kimodo-mcp"
+version = "0.2.0"
+description = "MCP server for NVIDIA Kimodo text-to-motion: specs, GPU-friendly generation jobs, previews Claude can see, take measures and picks."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Ali Unal" }]
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=2.12", "numpy", "psutil", "pillow"]
+keywords = ["mcp", "kimodo", "text-to-motion", "animation", "claude"]
+
+[project.urls]
+Homepage = "https://github.com/alivnal/kimodo-mcp"
+Author = "https://github.com/alivnal"
+
+[project.scripts]
+kimodo-mcp = "kimodo_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kimodo_mcp"]

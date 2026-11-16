@@ -1,6 +1,8 @@
-"""Text prompts -> Kimodo motions -> Mixamo-retargeted FBX, in one run (the model loads once).
+"""Text prompts -> Kimodo motions (.npz) -> optional Mixamo-retargeted FBX, in one run (the model loads once).
 
-    venv311\\Scripts\\python.exe -u scripts\\kimodo_batch.py <spec.json> [--only a,b] [--force] [--samples N] [--reexport]
+    <kimodo python> -u kimodo_batch.py <spec.json> [--only a,b] [--force] [--samples N] [--reexport]
+
+Paths in a spec and the outputs/ folder are relative to the workspace: KIMODO_ROOT, else the folder above this one.
 
 spec.json:
     {
@@ -41,6 +43,7 @@ after changing target_fbx / in_place in the spec); it never regenerates motion.
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -51,7 +54,8 @@ import torch
 
 import kimodo_author as author
 
-ROOT = Path(__file__).resolve().parents[1]
+# The workspace (specs/, outputs/, assets/): KIMODO_ROOT, else the folder above this script's folder.
+ROOT = Path(os.environ.get("KIMODO_ROOT") or Path(__file__).resolve().parents[1])
 DEFAULT_TARGET = ROOT / "assets" / "characters" / "Y Bot.fbx"
 
 
@@ -177,16 +181,24 @@ def main():
     if only - set(names):
         sys.exit(f"--only names not in the spec: {sorted(only - set(names))}")
 
+    # The Mixamo FBX export is optional: it needs a Kimodo with kimodo.exports.mixamo_retarget, the FBX SDK and a target
+    # character. A spec that names target_fbx, or --reexport, asks for it and stops when it cannot be done; otherwise
+    # the takes are written as .npz only (the previews and the retarget read the .npz).
     target = resolve(spec.get("target_fbx", DEFAULT_TARGET))
-    if not target.is_file():
-        sys.exit(f"target character not found: {target}")
+    try:
+        from kimodo.exports import mixamo_retarget
+        no_fbx = None if mixamo_retarget.HAS_FBX_SDK else "the FBX SDK (python 'fbx' module) is missing"
+    except ImportError:
+        no_fbx = "this Kimodo has no Mixamo export (kimodo.exports.mixamo_retarget)"
+    if not no_fbx and not target.is_file():
+        no_fbx = f"target character not found: {target}"
+    if no_fbx and ("target_fbx" in spec or args.reexport):
+        sys.exit(f"FBX export asked for, but {no_fbx}.")
+    if no_fbx:
+        print(f"FBX export off: {no_fbx}; takes are written as .npz only", flush=True)
     out_dir = args.out / spec["name"]
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    from kimodo.exports import mixamo_retarget
-
-    if not mixamo_retarget.HAS_FBX_SDK:
-        sys.exit("FBX SDK (python 'fbx' module) missing in the venv; Mixamo export needs it.")
+    done_ext = ".npz" if no_fbx else ".fbx"  # the file that says a take is finished
 
     # Work out what to run before loading the model (loading takes a few minutes).
     jobs = []
@@ -200,14 +212,14 @@ def main():
             missing = [f.with_suffix(".npz").name for f in fbx if not f.with_suffix(".npz").is_file()]
             if missing:
                 sys.exit(f"--reexport: {clip['name']} has no saved motion {missing}; generate it first")
-        elif not args.force and all(f.is_file() for f in fbx):
+        elif not args.force and all(f.with_suffix(done_ext).is_file() for f in fbx):
             print(f"skip {clip['name']}: output exists (use --force to redo)", flush=True)
             continue
         jobs.append((i, clip, n, clip_dir, fbx))
 
     manifest_path = out_dir / "manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.is_file() else {"clips": {}}
-    manifest.update(name=spec["name"], target_fbx=str(target), spec=str(args.spec.resolve()))
+    manifest.update(name=spec["name"], target_fbx=str(target), spec=str(args.spec.resolve()), fbx=not no_fbx)
 
     def record(clip, i, n, fbx, frames, seed, steps, in_place, measured=None):
         manifest["clips"][clip["name"]] = {
@@ -294,7 +306,8 @@ def main():
                     measured.setdefault("ground_fit", []).append(fit)
                 np.savez_compressed(fbx[s].with_suffix(".npz"), **take, fps=fps, prompt=" | ".join(p for p, _ in segs), seed=seed,
                                     sample=s, **skeleton_arrays(skel))
-                export_fbx(skel, take["posed_joints"], take["global_rot_mats"], fps, target, fbx[s], in_place)
+                if not no_fbx:
+                    export_fbx(skel, take["posed_joints"], take["global_rot_mats"], fps, target, fbx[s], in_place)
             record(clip, i, n, fbx, frames, seed, steps, in_place, measured)
             peak = f", GPU peak {torch.cuda.max_memory_allocated() / 2 ** 30:.1f} GB" if device != "cpu" else ""
             print(f"done {clip['name']}: {n} sample(s), {frames} frames, {time.time() - t0:.0f} s{peak}"

@@ -1,6 +1,6 @@
 """Previews for a kimodo_batch output folder: an mp4 per FBX and a contact sheet per clip, plus README.md.
 
-    venv311\\Scripts\\python.exe scripts\\kimodo_preview.py outputs\\<name> [--force]
+    <kimodo python> kimodo_preview.py outputs/<name> [--force]
 
 Renders each take in Blender (Workbench, fixed 3/4 camera) on Kimodo's own SOMA body, straight from <clip>_s<k>.npz
 (the motion itself, not its retarget; a take with no .npz is shown as its Mixamo FBX), encodes <clip>_s<k>.mp4 with ffmpeg,
@@ -9,6 +9,7 @@ Existing previews are kept unless --force.
 """
 
 import argparse
+import importlib.util
 import json
 import os
 import re
@@ -23,7 +24,24 @@ HERE = Path(__file__).resolve().parent
 BLENDER = os.environ.get("BLENDER", r"C:\Program Files\Blender Foundation\Blender 5.2\blender.exe")
 FFMPEG = shutil.which("ffmpeg") or "ffmpeg"
 COLS, THUMB = 6, 256
-SKIN = HERE.parent / "kimodo" / "kimodo" / "assets" / "skeletons" / "somaskel77" / "skin_standard.npz"
+def _skin():
+    """Kimodo's SOMA body: KIMODO_SKIN, else the asset inside the installed kimodo package (found without importing it)."""
+    if os.environ.get("KIMODO_SKIN"):
+        return Path(os.environ["KIMODO_SKIN"])
+    spec = importlib.util.find_spec("kimodo")
+    if spec is None or not spec.origin:
+        sys.exit("kimodo is not importable in this Python; run the preview with your Kimodo env's python")
+    return Path(spec.origin).parent / "assets" / "skeletons" / "somaskel77" / "skin_standard.npz"
+
+
+SKIN = _skin()
+
+
+def _font(size):
+    try:
+        return ImageFont.truetype("arial.ttf", size)
+    except OSError:  # no Arial (Linux): Pillow's own font
+        return ImageFont.load_default()
 
 
 def render(fbx: Path, force: bool) -> Path:
@@ -46,14 +64,19 @@ def render(fbx: Path, force: bool) -> Path:
 
 
 def sheet(clip_dir: Path, name: str, samples: list[Path], prompt: str) -> Path:
-    font = ImageFont.truetype("arial.ttf", 18)
-    small = ImageFont.truetype("arial.ttf", 14)
+    font = _font(18)
+    small = _font(14)
     head = 34
     img = Image.new("RGB", (COLS * THUMB, head + len(samples) * THUMB), "white")
     draw = ImageDraw.Draw(img)
     draw.text((8, 8), f"{name}: {prompt}", fill="black", font=font)
     for row, fbx in enumerate(samples):
-        frames = sorted((fbx.parent / f"_frames_{fbx.stem}").glob("f_*.png"))
+        frames_dir = fbx.parent / f"_frames_{fbx.stem}"
+        if not any(frames_dir.glob("f_*.png")):  # kept mp4, no fresh render: take the frames from the mp4 (0-based)
+            frames_dir.mkdir(exist_ok=True)
+            subprocess.run([FFMPEG, "-y", "-loglevel", "error", "-i", str(fbx.with_suffix(".mp4")), "-start_number", "0",
+                            str(frames_dir / "f_%04d.png")], check=True, stdin=subprocess.DEVNULL)
+        frames = sorted(frames_dir.glob("f_*.png"))
         picks = [frames[round(i * (len(frames) - 1) / (COLS - 1))] for i in range(COLS)]
         for col, f in enumerate(picks):
             thumb = Image.open(f).convert("RGB").resize((THUMB, THUMB))
@@ -76,10 +99,14 @@ def main():
     rows = []
     for name, clip in manifest["clips"].items():
         fbxs = [args.batch_dir / f for f in clip["files"]]
+        fresh = False
         for fbx in fbxs:
+            fresh |= args.force or not fbx.with_suffix(".mp4").is_file()
             render(fbx, args.force)
             print(f"preview {fbx.name}")
-        sh = sheet(fbxs[0].parent, name, fbxs, clip["prompt"])
+        sh = fbxs[0].parent / f"{name}_sheet.png"
+        if fresh or not sh.is_file():  # a rerun with every mp4 kept keeps its sheet
+            sh = sheet(fbxs[0].parent, name, fbxs, clip["prompt"])
         for fbx in fbxs:
             shutil.rmtree(fbx.parent / f"_frames_{fbx.stem}", ignore_errors=True)
         rows.append((name, clip, fbxs, sh))
@@ -87,9 +114,10 @@ def main():
     lines = [f"# {manifest['name']}", "",
              f"Model {manifest.get('model', '?')}, {manifest.get('fps', 30):g} fps. "
              f"Each clip has {len(rows[0][2]) if rows else 0} sample(s): `.npz` raw SOMA motion, `.mp4` preview of it on "
-             f"Kimodo's SOMA body, `<clip>_s<k>.fbx` the same motion retargeted onto `{Path(manifest['target_fbx']).name}` "
-             "(Mixamo rig); "
-             "`<clip>_sheet.png` shows each sample as one row.", "",
+             "Kimodo's SOMA body, "
+             + (f"`<clip>_s<k>.fbx` the same motion retargeted onto `{Path(manifest['target_fbx']).name}` (Mixamo rig); "
+                if manifest.get("fbx", True) else "no FBX export (the batch ran without it); ")
+             + "`<clip>_sheet.png` shows each sample as one row.", "",
              "| clip | shot | s | prompt | files |", "|---|---|---|---|---|"]
     for name, clip, fbxs, sh in rows:
         files = " ".join(f"[s{i + 1}]({f.relative_to(args.batch_dir).as_posix().replace(' ', '%20')})"
