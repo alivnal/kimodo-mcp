@@ -113,9 +113,16 @@ from fastmcp.exceptions import ToolError  # noqa: E402
 from fastmcp.utilities.types import Image  # noqa: E402
 from PIL import Image as PILImage, ImageDraw, ImageFont  # noqa: E402
 
+try:  # the version is pyproject.toml's, read from the installed package's metadata
+    from importlib.metadata import version as _pkg_version
+
+    VERSION = _pkg_version("kimodo-mcp")
+except Exception:  # noqa: BLE001 - running from a plain checkout
+    VERSION = "0+unknown"
+
 mcp = FastMCP(
     "kimodo",
-    version="0.1.0",
+    version=VERSION,
     website_url="https://github.com/alivnal",
     instructions=(
         "Kimodo text-to-motion on this machine: write_spec -> generate (background job, model loaded per job, GPU "
