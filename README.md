@@ -55,59 +55,18 @@ numbers from the motion file and hands you the better take, with frame numbers f
 
 ## How it works
 
-```mermaid
-flowchart TB
-    subgraph host["Claude Code / Claude Desktop"]
-        A["Claude session"]
-    end
-    subgraph server["kimodo MCP server · no torch"]
-        T["10 tools<br/>(+ retarget)"]
-        G{"GPU guard<br/>Kimodo already<br/>on the GPU?"}
-    end
-    subgraph jobs["Detached job · own process"]
-        R["runner<br/>(stores exit code)"]
-        B["kimodo_batch.py<br/>load → encode → clips"]
-        P["kimodo_preview.py<br/>Blender + ffmpeg"]
-    end
-    GPU[("NVIDIA GPU")]
-    FS[("outputs/<br/>takes · mp4 · sheets<br/>_logs/ · _mcp_jobs/")]
-
-    A <-->|stdio| T
-    T --> G
-    G -->|"free"| R
-    G -.->|"busy: refused"| A
-    R --> B & P
-    B -->|"model loaded per job"| GPU
-    B --> FS
-    P --> FS
-    T -->|"job · view · measure · list"| FS
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/architecture_dark.svg">
+  <img src="docs/architecture_light.svg" alt="How the server, its jobs, the GPU and the workspace connect: tools go through a GPU guard; a free GPU starts a detached job running kimodo_batch.py or kimodo_preview.py, which load the model on the GPU and write takes, mp4s and sheets to the workspace" width="880">
+</picture>
 
 A job is a record in `outputs/_logs/_mcp_jobs/<id>.json` plus a log in `outputs/_logs/`. The runner that starts the
 script waits for it and writes the exit code, so the state is right even when the session that started the job is gone.
 
-```mermaid
-sequenceDiagram
-    autonumber
-    participant C as Claude
-    participant S as MCP server
-    participant J as Job process
-    participant G as GPU
-    C->>S: generate("demo_showcase")
-    S->>S: scan processes: another Kimodo on the GPU?
-    S->>J: start detached runner + kimodo_batch.py
-    S-->>C: job_id (returns at once)
-    J->>G: load Kimodo
-    J->>G: encode every prompt once (5.4 GB peak)
-    J->>G: move the text encoder off the GPU
-    loop each clip
-        J->>G: diffusion, all samples (1.1–1.2 GB)
-    end
-    J-->>G: process exits: 0 GB held
-    C->>S: job(job_id)
-    S-->>C: done · 5 clips · GPU after: free
-    C->>S: preview → view → measure → finalize
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/sequence_dark.svg">
+  <img src="docs/sequence_light.svg" alt="A generate call: the server checks for another Kimodo on the GPU, starts a detached job and returns its id at once; the job loads Kimodo, encodes every prompt once at 5.4 GB, moves the encoder off the GPU, runs each clip at 1.1-1.2 GB and exits holding nothing" width="880">
+</picture>
 
 ### What the GPU sees
 
@@ -123,15 +82,10 @@ the 5.4 GB encode spilled into shared memory and took 81 s (about 15 s on a free
 
 ## The workflow
 
-```mermaid
-flowchart LR
-    W["write_spec"] --> Gn["generate"] --> Jb["job"] --> Pv["preview"]
-    Pv --> V["view<br/>sheet · frame grid"] & M["measure<br/>numbers from .npz"]
-    V & M --> D{"follows<br/>the prompt?"}
-    D -->|"no: reword, _v2"| W
-    D -->|"yes"| F["finalize<br/>picks folder"]
-    F -.->|"optional"| Rt["retarget<br/>onto your rig"]
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/workflow_dark.svg">
+  <img src="docs/workflow_light.svg" alt="write_spec, generate, job, preview, then view and measure; if the take does not follow the prompt, reword as a _v2 spec; if it does, finalize and optionally retarget" width="880">
+</picture>
 
 ### A spec
 
