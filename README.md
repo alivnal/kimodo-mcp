@@ -55,7 +55,7 @@ numbers from the motion file and hands you the better take, with frame numbers f
 ## How it works
 
 ```mermaid
-flowchart LR
+flowchart TB
     subgraph host["Claude Code / Claude Desktop"]
         A["Claude session"]
     end
