@@ -1,0 +1,53 @@
+{
+  "name": "demo_showcase",
+  "seed": 2026,
+  "samples": 2,
+  "clips": [
+    {
+      "name": "walk_steady",
+      "prompt": "A person walks forward at a steady, relaxed pace.",
+      "seconds": 5,
+      "path": {
+        "speed": 1.4
+      },
+      "note": "root path fixes the speed at 1.4 m/s"
+    },
+    {
+      "name": "wave_right",
+      "prompt": "A person stands still and waves their right hand above their head.",
+      "seconds": 4
+    },
+    {
+      "name": "jump_in_place",
+      "prompt": "A person jumps up and down several times in place.",
+      "seconds": 4
+    },
+    {
+      "name": "walk_stop_point",
+      "segments": [
+        {
+          "prompt": "A person walks forward at a steady, relaxed pace.",
+          "seconds": 3
+        },
+        {
+          "prompt": "A person walking forward slows down and comes to a stop.",
+          "seconds": 1.5
+        },
+        {
+          "prompt": "A person standing still raises their right arm and points forward.",
+          "seconds": 2.5
+        }
+      ],
+      "path": {
+        "speed": 1.4,
+        "stop_at": 4.3
+      },
+      "note": "three prompts as one continuous take"
+    },
+    {
+      "name": "look_around",
+      "prompt": "A person stands still and looks around, unsure which way to go.",
+      "seconds": 4
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+[project]
+name = "kimodo-mcp"
+version = "0.1.0"
+description = "MCP server for NVIDIA Kimodo text-to-motion: specs, GPU-friendly generation jobs, previews, take measures and picks."
+authors = [{ name = "Ali Unal" }]
+urls = { Homepage = "https://github.com/alivnal/kimodo-mcp", Author = "https://github.com/alivnal" }
+license = { text = "MIT" }
+requires-python = ">=3.11"
+dependencies = ["fastmcp>=2.12", "numpy", "psutil", "pillow"]
+
+[tool.uv]
+package = false

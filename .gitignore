@@ -1,0 +1,23 @@
+# Allowlist: the install folder also holds the Kimodo repo, venvs, model weights, outputs and private specs.
+/*
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/LICENSE
+!/install_kimodo.bat
+!/start_kimodo.bat
+!/requirements-lock.txt
+!/scripts/
+!/mcp/
+!/docs/
+!/specs/
+/specs/*
+!/specs/examples/
+!/assets/
+/assets/*
+!/assets/README.md
+
+__pycache__/
+*.pyc
+/scripts/*.pre_*
+/mcp/.venv/
